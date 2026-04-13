@@ -28,7 +28,7 @@ Two vLLM environments are currently useful:
 The corresponding manifests are kept in the repo on purpose:
 
 - [`requirements-vllm-cu130.in`](/home/jamesa261/gemma-4-playground/requirements-vllm-cu130.in) and [`requirements-vllm-cu130.txt`](/home/jamesa261/gemma-4-playground/requirements-vllm-cu130.txt) for the dense CUDA 13 environment
-- [`requirements-vllm.in`](/home/jamesa261/gemma-4-playground/requirements-vllm.in) and [`requirements-vllm.txt`](/home/jamesa261/gemma-4-playground/requirements-vllm.txt) for the patched MoE environment
+- [`requirements-vllm-moe-cu129.in`](/home/jamesa261/gemma-4-playground/requirements-vllm-moe-cu129.in) and [`requirements-vllm-moe-cu129.txt`](/home/jamesa261/gemma-4-playground/requirements-vllm-moe-cu129.txt) for the patched MoE environment
 
 The dense setup helper is:
 
