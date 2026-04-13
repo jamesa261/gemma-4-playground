@@ -13,6 +13,7 @@ The main entrypoint is [`scripts/serve_gemma4_vllm.py`](/home/jamesa261/gemma-4-
 - [`scripts/gemma4_vllm_profiles.py`](/home/jamesa261/gemma-4-playground/scripts/gemma4_vllm_profiles.py): shared model presets and runtime checks
 - [`scripts/chat_gemma4_vllm.py`](/home/jamesa261/gemma-4-playground/scripts/chat_gemma4_vllm.py): local REPL for qualitative testing
 - [`scripts/benchmark_gemma4_vllm.py`](/home/jamesa261/gemma-4-playground/scripts/benchmark_gemma4_vllm.py): in-process throughput benchmark
+- [`scripts/run_open_webui.sh`](/home/jamesa261/gemma-4-playground/scripts/run_open_webui.sh): launch Open WebUI against the local vLLM OpenAI endpoint
 - [`scripts/setup_vllm_cu130.sh`](/home/jamesa261/gemma-4-playground/scripts/setup_vllm_cu130.sh): setup helper for the CUDA 13 dense environment
 - [`patches/vllm-gemma4-modelopt-moe-loader.patch`](/home/jamesa261/gemma-4-playground/patches/vllm-gemma4-modelopt-moe-loader.patch): required patch for the community 26B MoE checkpoint
 
@@ -74,6 +75,12 @@ If you want Gemma 4 tool-call parsing enabled on the server as well:
 
 ```bash
 .venv-vllm-cu130/bin/python scripts/serve_gemma4_vllm.py --enable-auto-tool-choice
+```
+
+If you want generic OpenAI-compatible clients to get Gemma 4 thinking mode without having to send `chat_template_kwargs` manually:
+
+```bash
+.venv-vllm-cu130/bin/python scripts/serve_gemma4_vllm.py --enable-thinking-by-default
 ```
 
 ## Default Profiles
@@ -181,6 +188,37 @@ Red Hat benchmark:
   --batch-sizes 1 2 4 8
 ```
 
+## Browser UI
+
+For a browser chat UI, the pragmatic path is Open WebUI rather than building another client in this repo.
+
+Start the vLLM server first:
+
+```bash
+.venv-vllm-cu130/bin/python scripts/serve_gemma4_vllm.py
+```
+
+If you want reasoning enabled for all UI requests, start the server with:
+
+```bash
+.venv-vllm-cu130/bin/python scripts/serve_gemma4_vllm.py --enable-thinking-by-default
+```
+
+Then start Open WebUI:
+
+```bash
+bash scripts/run_open_webui.sh
+```
+
+That helper uses `uvx` to run the latest Open WebUI release, points it at `http://127.0.0.1:8000/v1`, disables Ollama in the UI, and stores Open WebUI state under `.open-webui-data/`.
+
+Notes:
+
+- The first `uvx` launch is heavy because it has to provision Python 3.11 and install Open WebUI.
+- Open WebUI uses the OpenAI-compatible interface exposed by vLLM, so it works cleanly with the server mode in this repo.
+- For Gemma 4 thinking, the important server-side flag is `--enable-thinking-by-default`, because generic UIs usually do not expose `chat_template_kwargs.enable_thinking` directly.
+- For Gemma 4 tool calling, the vLLM recipe also recommends `--tool-call-parser gemma4`, `--enable-auto-tool-choice`, and the Gemma 4 tool chat template from the vLLM examples. That alignment is still partial in this repo today; the current helper is aimed at browser chat and reasoning rather than end-to-end tool use.
+
 ## Current Observations
 
 On this machine, the dense CUDA 13 NVFP4 path is the best serving default.
@@ -196,4 +234,5 @@ On this machine, the dense CUDA 13 NVFP4 path is the best serving default.
 
 - Dense profiles require `ninja` on `PATH` so the FlashInfer NVFP4 kernels can JIT successfully.
 - The server launcher enables the Gemma 4 reasoning parser by default. Tool-call parsing is opt-in through `--enable-auto-tool-choice`.
+- `--enable-thinking-by-default` exists mainly for OpenAI-compatible UIs like Open WebUI, where per-request `chat_template_kwargs` are not usually surfaced directly.
 - The non-CUDA-13 vLLM manifest is still kept because the current MoE workflow is pinned to the patched `.venv-vllm` environment rather than the CUDA 13 dense stack.

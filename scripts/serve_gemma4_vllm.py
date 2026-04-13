@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shlex
 import shutil
@@ -33,6 +34,7 @@ FLAG_MAP = {
     "language_model_only": "--language-model-only",
     "limit_mm_per_prompt": "--limit-mm-per-prompt",
     "reasoning_parser": "--reasoning-parser",
+    "default_chat_template_kwargs": "--default-chat-template-kwargs",
     "tool_call_parser": "--tool-call-parser",
     "enable_auto_tool_choice": "--enable-auto-tool-choice",
     "moe_backend": "--moe-backend",
@@ -87,6 +89,15 @@ def parse_args() -> argparse.Namespace:
         "--disable-reasoning-parser",
         action="store_true",
         help="Do not set --reasoning-parser gemma4 on the server.",
+    )
+    parser.add_argument(
+        "--enable-thinking-by-default",
+        action="store_true",
+        help=(
+            "Set Gemma 4 thinking mode on for every request by passing "
+            "--default-chat-template-kwargs '{\"enable_thinking\": true}'. "
+            "This is useful for generic OpenAI-compatible UIs that do not expose chat_template_kwargs."
+        ),
     )
     parser.add_argument(
         "--enable-auto-tool-choice",
@@ -162,6 +173,9 @@ def resolve_settings(args: argparse.Namespace) -> dict[str, Any]:
     if args.enable_auto_tool_choice:
         settings["tool_call_parser"] = "gemma4"
         settings["enable_auto_tool_choice"] = True
+
+    if args.enable_thinking_by_default:
+        settings["default_chat_template_kwargs"] = json.dumps({"enable_thinking": True})
 
     return settings
 

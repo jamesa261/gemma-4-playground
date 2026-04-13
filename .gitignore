@@ -10,3 +10,4 @@ __pycache__/
 .cache/
 bench_results.csv
 dump_input*
+.open-webui-data/
