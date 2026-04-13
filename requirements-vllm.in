@@ -1,0 +1,5 @@
+# CUDA 12.9 nightly wheel as of 2026-04-13.
+# Retained for the patched Gemma 4 26B A4B MoE workflow.
+https://wheels.vllm.ai/739e5945dc4b3ba30d84bdf6e637657abd4136b8/vllm-0.19.1rc1.dev242%2Bg739e5945d-cp38-abi3-manylinux_2_31_x86_64.whl
+nvidia-modelopt
+transformers==5.5.4
