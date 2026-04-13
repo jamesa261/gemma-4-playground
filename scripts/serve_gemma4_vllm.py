@@ -192,6 +192,9 @@ def build_command(args: argparse.Namespace, settings: dict[str, Any]) -> list[st
             if value:
                 cmd.append(flag)
             continue
+        if isinstance(value, (dict, list)):
+            cmd.extend([flag, json.dumps(value)])
+            continue
         cmd.extend([flag, str(value)])
 
     cmd.extend(args.extra_arg)

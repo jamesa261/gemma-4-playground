@@ -14,6 +14,7 @@ The main entrypoint is [`scripts/serve_gemma4_vllm.py`](/home/jamesa261/gemma-4-
 - [`scripts/chat_gemma4_vllm.py`](/home/jamesa261/gemma-4-playground/scripts/chat_gemma4_vllm.py): local REPL for qualitative testing
 - [`scripts/benchmark_gemma4_vllm.py`](/home/jamesa261/gemma-4-playground/scripts/benchmark_gemma4_vllm.py): in-process throughput benchmark
 - [`scripts/run_open_webui.sh`](/home/jamesa261/gemma-4-playground/scripts/run_open_webui.sh): launch Open WebUI against the local vLLM OpenAI endpoint
+- [`scripts/test_structured_output.py`](/home/jamesa261/gemma-4-playground/scripts/test_structured_output.py): minimal structured-output test against the server API
 - [`scripts/setup_vllm_cu130.sh`](/home/jamesa261/gemma-4-playground/scripts/setup_vllm_cu130.sh): setup helper for the CUDA 13 dense environment
 - [`patches/vllm-gemma4-modelopt-moe-loader.patch`](/home/jamesa261/gemma-4-playground/patches/vllm-gemma4-modelopt-moe-loader.patch): required patch for the community 26B MoE checkpoint
 
@@ -210,7 +211,7 @@ Then start Open WebUI:
 bash scripts/run_open_webui.sh
 ```
 
-That helper uses `uvx` to run the latest Open WebUI release, points it at `http://127.0.0.1:8000/v1`, disables Ollama in the UI, and stores Open WebUI state under `.open-webui-data/`.
+That helper uses `uvx` to run the latest Open WebUI release, points it at `http://127.0.0.1:8000/v1`, disables Ollama, disables WebUI auth for simple localhost usage, and stores state under `.open-webui-data/`.
 
 Notes:
 
@@ -218,6 +219,29 @@ Notes:
 - Open WebUI uses the OpenAI-compatible interface exposed by vLLM, so it works cleanly with the server mode in this repo.
 - For Gemma 4 thinking, the important server-side flag is `--enable-thinking-by-default`, because generic UIs usually do not expose `chat_template_kwargs.enable_thinking` directly.
 - For Gemma 4 tool calling, the vLLM recipe also recommends `--tool-call-parser gemma4`, `--enable-auto-tool-choice`, and the Gemma 4 tool chat template from the vLLM examples. That alignment is still partial in this repo today; the current helper is aimed at browser chat and reasoning rather than end-to-end tool use.
+- If you already have an `.open-webui-data/` directory from an earlier auth-enabled run, remove it before using the no-login wrapper.
+
+## Structured Output
+
+The Gemma 4 vLLM recipe explicitly documents structured output support through `response_format={"type": "json_schema", ...}` on the OpenAI-compatible chat API.
+
+This repo includes a short test client for that path:
+
+```bash
+.venv-vllm-cu130/bin/python scripts/test_structured_output.py \
+  --model LilaRest/gemma-4-31B-it-NVFP4-turbo
+```
+
+Structured output with thinking:
+
+```bash
+.venv-vllm-cu130/bin/python scripts/test_structured_output.py \
+  --model LilaRest/gemma-4-31B-it-NVFP4-turbo \
+  --schema entity-extraction \
+  --enable-thinking
+```
+
+Use the browser UI for qualitative chat and reasoning display. Use the structured-output script for schema-constrained API verification.
 
 ## Current Observations
 
