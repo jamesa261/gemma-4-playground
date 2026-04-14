@@ -11,3 +11,5 @@ __pycache__/
 bench_results.csv
 dump_input*
 .open-webui-data/
+.webui_secret_key
+.python-version
