@@ -96,9 +96,14 @@ def main() -> int:
         },
     ]
 
-    extra_body: dict[str, Any] | None = None
-    if args.enable_thinking:
-        extra_body = {"chat_template_kwargs": {"enable_thinking": True}}
+    # Make the request deterministic even when the server was launched with
+    # --enable-thinking-by-default. Structured-output tests should only spend
+    # output budget on reasoning when the caller explicitly opts in.
+    extra_body: dict[str, Any] = {
+        "chat_template_kwargs": {
+            "enable_thinking": args.enable_thinking,
+        }
+    }
 
     response = client.chat.completions.create(
         model=args.model,
@@ -114,7 +119,16 @@ def main() -> int:
         extra_body=extra_body,
     )
 
-    message = response.choices[0].message
+    choice = response.choices[0]
+    message = choice.message
+
+    print("=== Response Metadata ===")
+    print(f"finish_reason: {choice.finish_reason}")
+    if response.usage is not None:
+        print(f"prompt_tokens: {response.usage.prompt_tokens}")
+        print(f"completion_tokens: {response.usage.completion_tokens}")
+        print(f"total_tokens: {response.usage.total_tokens}")
+    print()
 
     if getattr(message, "reasoning", None):
         print("=== Thinking ===")
@@ -125,10 +139,20 @@ def main() -> int:
     print(message.content)
     print()
 
+    if message.content is None:
+        print("No final content was returned.")
+        if choice.finish_reason == "length":
+            print("Hint: the response hit max_tokens before the model emitted the final JSON content.")
+            if args.enable_thinking:
+                print("Hint: when thinking is enabled, reasoning tokens share the same output budget as the final answer.")
+        return 1
+
     try:
         parsed = json.loads(message.content)
     except json.JSONDecodeError as exc:
         print(f"JSON decode failed: {exc}")
+        if choice.finish_reason == "length":
+            print("Hint: the response hit max_tokens. If thinking is enabled, the reasoning trace shares that same output budget.")
         return 1
 
     print("=== Parsed JSON ===")
