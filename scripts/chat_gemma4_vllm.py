@@ -22,8 +22,10 @@ from gemma4_vllm_profiles import (
     MOE_26B_REDHAT_MODEL,
     NVFP4_GEMM_BACKENDS,
     REDHAT_MODEL,
+    TURBOQUANT_KV_CACHE_DTYPES,
     ensure_runtime_bin_on_path,
 )
+from gemma4_vllm_turboquant import apply_vllm_turboquant_workarounds, resolve_selective_turboquant_settings
 
 DEFAULT_MODEL = MOE_26B_MODEL
 DEFAULT_PROMPT = "Explain NVFP4 in one sentence."
@@ -70,7 +72,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--kv-cache-dtype",
         default=None,
-        choices=["auto", "fp8"],
+        choices=["auto", "fp8", *TURBOQUANT_KV_CACHE_DTYPES],
         help="KV cache dtype for vLLM. If omitted, model-specific defaults may apply.",
     )
     parser.add_argument(
@@ -142,6 +144,12 @@ def parse_args() -> argparse.Namespace:
         help="Maximum concurrent sequences for the vLLM engine",
     )
     parser.add_argument(
+        "--max-num-batched-tokens",
+        type=int,
+        default=None,
+        help="Maximum total tokens scheduled in one vLLM iteration.",
+    )
+    parser.add_argument(
         "--gpu-memory-utilization",
         type=float,
         default=0.9,
@@ -189,6 +197,7 @@ def apply_model_specific_defaults(args: argparse.Namespace) -> list[str]:
         "--max-model-len": "max_model_len",
         "--gpu-memory-utilization": "gpu_memory_utilization",
         "--moe-backend": "moe_backend",
+        "--max-num-batched-tokens": "max_num_batched_tokens",
     }
     for option, attr in option_to_attr.items():
         if option not in args._specified_flags and attr in defaults:
@@ -210,6 +219,26 @@ def apply_model_specific_defaults(args: argparse.Namespace) -> list[str]:
         args.max_model_len = 4096
     if args.moe_backend is None:
         args.moe_backend = "auto"
+    return applied
+
+
+def apply_turboquant_defaults(args: argparse.Namespace) -> list[str]:
+    updates = resolve_selective_turboquant_settings(
+        model=args.model,
+        trust_remote_code=args.trust_remote_code,
+        kv_cache_dtype=args.kv_cache_dtype,
+        kv_cache_dtype_skip_layers=getattr(args, "kv_cache_dtype_skip_layers", None),
+        disable_hybrid_kv_cache_manager=getattr(args, "disable_hybrid_kv_cache_manager", None),
+    )
+    applied: list[str] = []
+    for key, value in updates.items():
+        setattr(args, key, value)
+        if key == "kv_cache_dtype_skip_layers":
+            applied.append(f"{key}={len(value)} layers")
+        else:
+            applied.append(f"{key}={value!r}")
+    if args.kv_cache_dtype in TURBOQUANT_KV_CACHE_DTYPES:
+        apply_vllm_turboquant_workarounds()
     return applied
 
 
@@ -535,6 +564,9 @@ def create_llm(args: argparse.Namespace) -> tuple[Any, Any, float]:
             kv_cache_dtype=args.kv_cache_dtype,
             moe_backend=args.moe_backend,
             max_num_seqs=args.max_num_seqs,
+            max_num_batched_tokens=args.max_num_batched_tokens,
+            kv_cache_dtype_skip_layers=getattr(args, "kv_cache_dtype_skip_layers", None),
+            disable_hybrid_kv_cache_manager=getattr(args, "disable_hybrid_kv_cache_manager", None),
             disable_log_stats=True,
             enable_log_requests=False,
             use_tqdm_on_load=args.verbose,
@@ -554,10 +586,18 @@ def print_load_summary(args: argparse.Namespace, load_seconds: float, applied_de
     print(f"tokenizer_mode: {args.tokenizer_mode}")
     print(f"trust_remote_code: {args.trust_remote_code}")
     print(f"kv_cache_dtype: {args.kv_cache_dtype}")
+    skip_layers = getattr(args, "kv_cache_dtype_skip_layers", None)
+    if skip_layers:
+        print(f"kv_cache_dtype_skip_layers: {len(skip_layers)} layers")
+    disable_hybrid = getattr(args, "disable_hybrid_kv_cache_manager", None)
+    if disable_hybrid is not None:
+        print(f"disable_hybrid_kv_cache_manager: {disable_hybrid}")
     print(f"moe_backend: {args.moe_backend}")
     print(f"nvfp4_gemm_backend: {os.environ.get('VLLM_NVFP4_GEMM_BACKEND', 'auto')}")
     print(f"max_model_len: {args.max_model_len}")
     print(f"max_num_seqs: {args.max_num_seqs}")
+    if args.max_num_batched_tokens is not None:
+        print(f"max_num_batched_tokens: {args.max_num_batched_tokens}")
     print(f"gpu_memory_utilization: {args.gpu_memory_utilization:.2f}")
     runtime_cuda = get_runtime_cuda_version()
     if runtime_cuda is not None:
@@ -599,6 +639,7 @@ def main() -> int:
     args = parse_args()
     applied_defaults = apply_model_specific_defaults(args)
     configure_environment(args)
+    applied_defaults.extend(apply_turboquant_defaults(args))
     return asyncio.run(run_app(args, applied_defaults))
 
 

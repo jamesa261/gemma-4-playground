@@ -15,6 +15,12 @@ DEFAULT_GGUF_MODEL = "unsloth/gemma-4-31B-it-GGUF:Q4_K_M"
 BASE_26B_TOKENIZER = "google/gemma-4-26B-A4B-it"
 BASE_31B_TOKENIZER = "google/gemma-4-31B-it"
 
+TURBOQUANT_KV_CACHE_DTYPES = [
+    "turboquant_k8v4",
+    "turboquant_4bit_nc",
+    "turboquant_k3v4_nc",
+    "turboquant_3bit_nc",
+]
 NVFP4_GEMM_BACKENDS = [
     "auto",
     "cutlass",
@@ -27,16 +33,22 @@ NVFP4_GEMM_BACKENDS = [
 ]
 MOE_BACKENDS = ["auto", "marlin"]
 
+MOE_26B_TURBOQUANT_SKIP_LAYERS = [str(i) for i in range(30) if i % 6 != 5]
+DENSE_31B_TURBOQUANT_SKIP_LAYERS = [str(i) for i in range(60) if i % 6 != 5]
+
 MODEL_SPECIFIC_DEFAULTS = {
     MOE_26B_MODEL: {
         "tokenizer": BASE_26B_TOKENIZER,
         "quantization": "modelopt",
         "dtype": "auto",
         "trust_remote_code": False,
-        "kv_cache_dtype": "auto",
-        "max_model_len": 4096,
+        "kv_cache_dtype": "turboquant_k8v4",
+        "kv_cache_dtype_skip_layers": MOE_26B_TURBOQUANT_SKIP_LAYERS,
+        "disable_hybrid_kv_cache_manager": True,
+        "max_model_len": 32768,
         "gpu_memory_utilization": 0.90,
         "moe_backend": "auto",
+        "max_num_batched_tokens": 8192,
     },
     MOE_26B_REDHAT_MODEL: {
         "tokenizer": BASE_26B_TOKENIZER,
@@ -59,9 +71,12 @@ MODEL_SPECIFIC_DEFAULTS = {
         "quantization": "modelopt",
         "dtype": "auto",
         "trust_remote_code": True,
-        "kv_cache_dtype": "fp8",
-        "max_model_len": 16384,
+        "kv_cache_dtype": "turboquant_k8v4",
+        "kv_cache_dtype_skip_layers": DENSE_31B_TURBOQUANT_SKIP_LAYERS,
+        "disable_hybrid_kv_cache_manager": True,
+        "max_model_len": 9984,
         "gpu_memory_utilization": 0.95,
+        "max_num_batched_tokens": 8192,
     },
     DEFAULT_GGUF_MODEL: {
         "tokenizer": BASE_31B_TOKENIZER,
@@ -88,14 +103,16 @@ SERVER_PROFILES = {
     "dense-31b": ServerProfile(
         key="dense-31b",
         model=LILA_MODEL,
-        description="Default 31B dense profile for this RTX 5090: LilaRest turbo NVFP4 on CUDA 13.",
+        description="Default 31B dense profile for this RTX 5090: LilaRest turbo NVFP4 with selective TurboQuant KV on CUDA 13.",
         recommended_python=".venv/bin/python",
         requires_cuda_major=13,
         defaults={
             "quantization": "modelopt",
             "trust_remote_code": True,
-            "kv_cache_dtype": "fp8",
-            "max_model_len": 16384,
+            "kv_cache_dtype": "turboquant_k8v4",
+            "kv_cache_dtype_skip_layers": DENSE_31B_TURBOQUANT_SKIP_LAYERS,
+            "disable_hybrid_kv_cache_manager": True,
+            "max_model_len": 9984,
             "gpu_memory_utilization": 0.95,
             "max_num_seqs": 8,
             "max_num_batched_tokens": 8192,
@@ -125,14 +142,16 @@ SERVER_PROFILES = {
     "moe-26b": ServerProfile(
         key="moe-26b",
         model=MOE_26B_MODEL,
-        description="Default 26B MoE profile for this RTX 5090: selective NVFP4 checkpoint on CUDA 13 with native Blackwell FP4 kernels.",
+        description="Default 26B MoE profile for this RTX 5090: selective NVFP4 checkpoint plus selective TurboQuant KV on CUDA 13.",
         recommended_python=".venv/bin/python",
         requires_cuda_major=13,
         defaults={
             "quantization": "modelopt",
             "trust_remote_code": False,
-            "kv_cache_dtype": "auto",
-            "max_model_len": 4096,
+            "kv_cache_dtype": "turboquant_k8v4",
+            "kv_cache_dtype_skip_layers": MOE_26B_TURBOQUANT_SKIP_LAYERS,
+            "disable_hybrid_kv_cache_manager": True,
+            "max_model_len": 32768,
             "gpu_memory_utilization": 0.9,
             "max_num_seqs": 16,
             "max_num_batched_tokens": 8192,

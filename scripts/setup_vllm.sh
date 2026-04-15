@@ -10,7 +10,7 @@ uv venv "$ENV_DIR"
 # Install the base runtime first so vLLM can resolve its declared dependency
 # set, then override the Hugging Face stack to the Gemma-4-capable versions.
 uv pip install --python "$PYTHON_BIN" \
-  "https://wheels.vllm.ai/739e5945dc4b3ba30d84bdf6e637657abd4136b8/vllm-0.19.1rc1.dev242%2Bg739e5945d.cu130-cp38-abi3-manylinux_2_35_x86_64.whl" \
+  "https://wheels.vllm.ai/21e5a9f48e773e36e916bc8d10c4ab4aed3887a7/vllm-0.19.1rc1.dev311%2Bg21e5a9f48.cu130-cp38-abi3-manylinux_2_35_x86_64.whl" \
   nvidia-modelopt \
   ninja
 uv pip install --python "$PYTHON_BIN" --no-deps transformers==5.5.4 huggingface_hub==1.9.2

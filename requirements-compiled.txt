@@ -1,8 +1,8 @@
-# CUDA 13 nightly wheel as of 2026-04-13, for Blackwell-native FP4 Gemma 4 checkpoints.
+# CUDA 13 nightly wheel as of 2026-04-15, for Blackwell-native FP4 Gemma 4 checkpoints.
 # This manifest is intentionally consumed via scripts/setup_vllm.sh rather than
 # a plain `uv pip sync`, because the current vLLM wheel still declares
 # `transformers<5` while Gemma 4 fixes need the overridden 5.5 stack.
-https://wheels.vllm.ai/739e5945dc4b3ba30d84bdf6e637657abd4136b8/vllm-0.19.1rc1.dev242%2Bg739e5945d.cu130-cp38-abi3-manylinux_2_35_x86_64.whl
+https://wheels.vllm.ai/21e5a9f48e773e36e916bc8d10c4ab4aed3887a7/vllm-0.19.1rc1.dev311%2Bg21e5a9f48.cu130-cp38-abi3-manylinux_2_35_x86_64.whl
 nvidia-modelopt
 ninja
 transformers==5.5.4

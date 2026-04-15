@@ -1,13 +1,13 @@
 # Gemma 4 Playground
 
-This repo is set up to run Gemma 4 through vLLM on an RTX 5090, using a single CUDA 13 environment and model-specific defaults for the profiles that are currently worth testing here:
+This repo is set up to run Gemma 4 through vLLM on an RTX 5090, using a single CUDA 13 environment and two TurboQuant-first profiles that are currently the most useful here:
 
 - `dense-31b`: `LilaRest/gemma-4-31B-it-NVFP4-turbo`
-- `dense-31b-redhat`: `RedHatAI/gemma-4-31B-it-NVFP4`
 - `moe-26b`: `cklaus/gemma-4-26B-A4B-it-NVFP4`
+- `dense-31b-redhat`: `RedHatAI/gemma-4-31B-it-NVFP4`
 - `moe-26b-redhat`: `RedHatAI/gemma-4-26B-A4B-it-NVFP4`
 
-The main entrypoint is [`scripts/serve_gemma4_vllm.py`](/home/jamesa261/gemma-4-playground/scripts/serve_gemma4_vllm.py). It resolves the right model, tokenizer, memory knobs, reasoning parser, and backend defaults for each profile, then launches `vllm serve`.
+The main entrypoint is [`scripts/serve_gemma4_vllm.py`](/home/jamesa261/gemma-4-playground/scripts/serve_gemma4_vllm.py). It resolves the right model, tokenizer, memory knobs, reasoning parser, and TurboQuant workarounds for each profile, then launches `vllm serve`.
 
 ## Layout
 
@@ -18,6 +18,7 @@ The main entrypoint is [`scripts/serve_gemma4_vllm.py`](/home/jamesa261/gemma-4-
 - [`scripts/run_open_webui.sh`](/home/jamesa261/gemma-4-playground/scripts/run_open_webui.sh): launch Open WebUI against the local vLLM OpenAI endpoint
 - [`scripts/test_structured_output.py`](/home/jamesa261/gemma-4-playground/scripts/test_structured_output.py): minimal structured-output test against the server API
 - [`scripts/setup_vllm.sh`](/home/jamesa261/gemma-4-playground/scripts/setup_vllm.sh): setup helper for the shared CUDA 13 vLLM environment
+- [`scripts/gemma4_vllm_turboquant.py`](/home/jamesa261/gemma-4-playground/scripts/gemma4_vllm_turboquant.py): selective-TurboQuant helpers and Gemma 4 runtime patch
 
 ## Environment
 
@@ -43,7 +44,26 @@ declared dependency set, then the Gemma-4-capable `transformers==5.5.4` and
 `transformers<5`, so a plain `pip_compile` / `uv pip sync requirements.txt`
 workflow is not reliable for this environment yet.
 
-The old patched cu129 MoE path has been removed. Current vLLM already contains the upstream Gemma 4 MoE support needed for the CUDA 13 / Blackwell-native NVFP4 path.
+The old patched cu129 MoE path has been removed. The remaining patching in this repo is now narrowly scoped to Gemma 4 plus TurboQuant on current upstream vLLM.
+
+## TurboQuant Notes
+
+Current upstream TurboQuant is not drop-in for Gemma 4's mixed sliding-window and global-attention layout. This repo applies the smallest workaround that was stable on this 5090:
+
+- only the full-attention layers use TurboQuant KV
+- sliding-window layers stay on native KV
+- `disable_hybrid_kv_cache_manager=True` is enabled for the TurboQuant profiles
+- the TurboQuant backend is forced off FlashAttention so Gemma 4's `global_head_dim=512` prefills fall back to SDPA instead of hitting the FA2 `head_dim <= 256` limit
+
+That keeps decode working on both the dense 31B turbo checkpoint and the preferred 26B MoE checkpoint, while still letting the native CUDA 13 / Blackwell NVFP4 weight path do the heavy lifting.
+
+Observed MoE fidelity with `turboquant_k8v4` on `cklaus/gemma-4-26B-A4B-it-NVFP4`:
+
+- `k8v4` means FP8 keys plus 4-bit uniformly quantized values, so the loss is expected to show up mostly in `V`, not `K`
+- measured on real vLLM captures from the four compressed full-attention layers, `K` cosine similarity was effectively near-lossless: mean about `0.99965` to `0.99968`
+- the same probe showed `V` cosine similarity in the modest-loss range: mean about `0.955` on a short 29-token chat prompt and about `0.974` on a longer 3396-token retrieval prompt
+- practical spot checks matched that picture: long retrieval outputs stayed faithful to the uncompressed-KV baseline, while short prompts could still drift a bit in formatting or numeric representation
+- this is a KV-cache comparison on the same NVFP4-weight checkpoint, not a full-BF16-weights comparison
 
 ## Quick Start
 
@@ -96,13 +116,16 @@ If you want Gemma 4 tool-call parsing enabled on the server as well:
 - Model: `LilaRest/gemma-4-31B-it-NVFP4-turbo`
 - Runtime: CUDA 13 vLLM env
 - Quantization: `modelopt`
-- KV cache: `fp8`
-- Max model length: `16384`
+- KV cache: selective `turboquant_k8v4`
+- TurboQuant scope: only full-attention layers are compressed; sliding-window layers are skipped
+- Max model length: `9984`
 - GPU memory utilization: `0.95`
 - Max sequences: `8`
 - Max batched tokens: `8192`
 - Reasoning parser: enabled
 - Text-only optimization: `--language-model-only` plus `--limit-mm-per-prompt image=0,audio=0,video=0`
+
+This profile is bounded by KV memory, not model weights. On this card and wheel, vLLM estimated a practical TurboQuant ceiling of about `10064` tokens, so the saved default stays slightly below that at `9984`.
 
 `dense-31b-redhat`
 
@@ -123,8 +146,9 @@ If you want Gemma 4 tool-call parsing enabled on the server as well:
 - Tokenizer: `google/gemma-4-26B-A4B-it`
 - Runtime: CUDA 13 vLLM env
 - Quantization: `modelopt`
-- KV cache: `auto`
-- Max model length: `4096`
+- KV cache: selective `turboquant_k8v4`
+- TurboQuant scope: only full-attention layers are compressed; sliding-window layers are skipped
+- Max model length: `32768`
 - GPU memory utilization: `0.90`
 - Max sequences: `16`
 - Max batched tokens: `8192`
@@ -132,7 +156,7 @@ If you want Gemma 4 tool-call parsing enabled on the server as well:
 - Reasoning parser: enabled
 - Text-only optimization: enabled
 
-This is the current default MoE profile because it cleanly picks up the native Blackwell NVFP4 path on this 5090 while landing close to the checkpoint author's published decode numbers.
+This is the current default MoE profile because it cleanly picks up the native Blackwell NVFP4 path on this 5090 and still leaves enough TurboQuant-compressed KV room for a much larger context budget than the dense 31B turbo path.
 
 `moe-26b-redhat`
 
@@ -178,7 +202,7 @@ Examples:
 ```bash
 .venv/bin/python scripts/serve_gemma4_vllm.py \
   --profile dense-31b \
-  --max-model-len 32768 \
+  --max-model-len 8192 \
   --gpu-memory-utilization 0.90
 ```
 
@@ -208,10 +232,10 @@ MoE benchmark:
 .venv/bin/python scripts/benchmark_gemma4_vllm.py \
   --model cklaus/gemma-4-26B-A4B-it-NVFP4 \
   --tokenizer google/gemma-4-26B-A4B-it \
-  --batch-sizes 1 4 16 \
+  --batch-sizes 1 4 8 16 \
   --max-num-seqs 16 \
-  --max-model-len 4096 \
-  --max-new-tokens 32
+  --max-model-len 32768 \
+  --max-new-tokens 64
 ```
 
 Upstream MoE baseline benchmark:
@@ -231,7 +255,9 @@ Dense benchmark:
 ```bash
 .venv/bin/python scripts/benchmark_gemma4_vllm.py \
   --model LilaRest/gemma-4-31B-it-NVFP4-turbo \
-  --batch-sizes 1 2 4 8
+  --batch-sizes 1 2 4 8 \
+  --max-model-len 8192 \
+  --max-new-tokens 64
 ```
 
 ## Browser UI
@@ -285,22 +311,31 @@ Use the browser UI for qualitative chat and reasoning display. Use the structure
 
 ## Current Observations
 
-On this 5090, the dense and MoE defaults are now both native CUDA 13 / Blackwell NVFP4 paths.
+On this `turboquant-experiment` branch, the preferred dense and MoE profiles both run through the native CUDA 13 / Blackwell NVFP4 weight path plus the selective TurboQuant KV workaround described above.
 
-- `LilaRest/gemma-4-31B-it-NVFP4-turbo`
-  Single-request decode was validated around `45 tok/s`, with batch-8 in-process decode around `309 tok/s`.
-- `RedHatAI/gemma-4-31B-it-NVFP4`
-  Similar single-request decode was validated around `46 tok/s`, with batch-8 in-process decode around `281 tok/s`, but with a tighter usable context budget on this card.
 - `cklaus/gemma-4-26B-A4B-it-NVFP4`
-  With `max_model_len=4096`, `max_num_seqs=16`, `gpu_memory_utilization=0.90`, and `max_new_tokens=32`, local in-process decode measured about `129 tok/s` at batch 1, `357 tok/s` at batch 4, and `1311 tok/s` at batch 16.
-- `RedHatAI/gemma-4-26B-A4B-it-NVFP4`
-  Under the same benchmark shape, local in-process decode measured about `138 tok/s` at batch 1, `348 tok/s` at batch 4, and `1343 tok/s` at batch 16. vLLM also emitted an NVFP4 warning that fused parallel layers are using different global scales, which may reduce accuracy. Treat this as the upstream baseline, not the preferred default.
+  `gpu_memory_utilization=0.90` exposed about `49,200` KV tokens with the saved profile shape. The saved profile default is `max_model_len=32768`.
+- `LilaRest/gemma-4-31B-it-NVFP4-turbo`
+  `gpu_memory_utilization=0.95` exposed about `11,760` KV tokens with the saved profile shape. vLLM estimated a hard ceiling around `10,064`, so the saved profile default is `max_model_len=9984`.
 
-Both 26B checkpoints loaded through the native CUDA 13 stack with NVFP4 GEMM and vLLM's Cutlass MoE path rather than the old patch-era compatibility route.
+Measured decode throughput on this machine:
+
+- `cklaus/gemma-4-26B-A4B-it-NVFP4`
+  `batch=1`: `128.3 tok/s total`
+  `batch=4`: `424.0 tok/s total`
+  `batch=8`: `643.1 tok/s total`
+  `batch=16`: `1140.2 tok/s total`
+- `LilaRest/gemma-4-31B-it-NVFP4-turbo`
+  `batch=1`: `49.8 tok/s total`
+  `batch=2`: `91.2 tok/s total`
+  `batch=4`: `178.5 tok/s total`
+  `batch=8`: `302.2 tok/s total`
+
+These numbers came from the checked-in benchmark script with short prompts and `max_new_tokens=64`, so treat them as decode-heavy reference points rather than end-to-end chat latency.
 
 ## Notes
 
 - CUDA 13 profiles need `ninja` on `PATH` so the FlashInfer NVFP4 kernels can JIT successfully.
 - The server launcher enables the Gemma 4 reasoning parser by default. Tool-call parsing is opt-in through `--enable-auto-tool-choice`.
-- For the 26B Gemma 4 MoE models, vLLM currently forces the Triton attention backend because of the model's heterogeneous head dimensions. That is expected and does not mean the NVFP4 GEMM or MoE kernels failed to activate.
+- Current upstream TurboQuant still needs the local Gemma 4 workaround in this repo. Without it, full-stack TurboQuant on Gemma 4 currently falls over on mixed attention geometry and FA2's `head_dim <= 256` limit.
 - `--enable-thinking-by-default` exists mainly for OpenAI-compatible UIs like Open WebUI, where per-request `chat_template_kwargs` are not usually surfaced directly.
