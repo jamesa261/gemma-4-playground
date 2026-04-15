@@ -7,18 +7,13 @@ import sys
 import time
 
 from transformers import AutoProcessor
-from vllm import LLM, SamplingParams
 from gemma4_vllm_profiles import (
-    BASE_26B_TOKENIZER,
-    BASE_31B_TOKENIZER,
-    DEFAULT_GGUF_MODEL,
-    LILA_MODEL,
     MODEL_SPECIFIC_DEFAULTS,
     MOE_26B_MODEL,
-    MOE_26B_REDHAT_MODEL,
-    REDHAT_MODEL,
+    TURBOQUANT_KV_CACHE_DTYPES,
     ensure_runtime_bin_on_path,
 )
+from gemma4_vllm_turboquant import apply_vllm_turboquant_workarounds, resolve_selective_turboquant_settings
 
 
 DEFAULT_MODEL = MOE_26B_MODEL
@@ -70,7 +65,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--kv-cache-dtype",
         default=None,
-        choices=["auto", "fp8"],
+        choices=["auto", "fp8", *TURBOQUANT_KV_CACHE_DTYPES],
         help="KV cache dtype for vLLM. If omitted, model-specific defaults may apply.",
     )
     parser.add_argument(
@@ -90,6 +85,12 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=1,
         help="Maximum concurrent sequences for the vLLM engine",
+    )
+    parser.add_argument(
+        "--max-num-batched-tokens",
+        type=int,
+        default=None,
+        help="Maximum total tokens scheduled in one vLLM iteration.",
     )
     parser.add_argument(
         "--gpu-memory-utilization",
@@ -139,6 +140,7 @@ def apply_model_specific_defaults(args: argparse.Namespace) -> list[str]:
         "--max-model-len": "max_model_len",
         "--gpu-memory-utilization": "gpu_memory_utilization",
         "--moe-backend": "moe_backend",
+        "--max-num-batched-tokens": "max_num_batched_tokens",
     }
     for option, attr in option_to_attr.items():
         if option not in args._specified_flags and attr in defaults:
@@ -163,12 +165,44 @@ def apply_model_specific_defaults(args: argparse.Namespace) -> list[str]:
     return applied
 
 
+def apply_turboquant_defaults(args: argparse.Namespace) -> list[str]:
+    updates = resolve_selective_turboquant_settings(
+        model=args.model,
+        trust_remote_code=args.trust_remote_code,
+        kv_cache_dtype=args.kv_cache_dtype,
+        kv_cache_dtype_skip_layers=getattr(args, "kv_cache_dtype_skip_layers", None),
+        disable_hybrid_kv_cache_manager=getattr(args, "disable_hybrid_kv_cache_manager", None),
+    )
+    applied: list[str] = []
+    for key, value in updates.items():
+        setattr(args, key, value)
+        if key == "kv_cache_dtype_skip_layers":
+            applied.append(f"{key}={len(value)} layers")
+        else:
+            applied.append(f"{key}={value!r}")
+    if args.kv_cache_dtype in TURBOQUANT_KV_CACHE_DTYPES:
+        apply_vllm_turboquant_workarounds()
+    return applied
+
+
+def configure_environment() -> None:
+    ensure_runtime_bin_on_path()
+    os.environ["VLLM_LOGGING_LEVEL"] = "ERROR"
+    os.environ["FLASHINFER_LOGGING_LEVEL"] = "ERROR"
+    os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
+    os.environ["TRANSFORMERS_VERBOSITY"] = "error"
+    os.environ["PYTHONWARNINGS"] = "ignore::FutureWarning"
+
+
 def main() -> int:
+    from vllm import LLM, SamplingParams
+
     args = parse_args()
     applied_defaults = apply_model_specific_defaults(args)
-    ensure_runtime_bin_on_path()
+    configure_environment()
     if args.nvfp4_gemm_backend != "auto":
         os.environ["VLLM_NVFP4_GEMM_BACKEND"] = args.nvfp4_gemm_backend
+    applied_defaults.extend(apply_turboquant_defaults(args))
     quantization = None if args.quantization == "none" else args.quantization
     tokenizer_id = args.tokenizer or args.model
 
@@ -187,6 +221,9 @@ def main() -> int:
         kv_cache_dtype=args.kv_cache_dtype,
         moe_backend=args.moe_backend,
         max_num_seqs=args.max_num_seqs,
+        max_num_batched_tokens=args.max_num_batched_tokens,
+        kv_cache_dtype_skip_layers=getattr(args, "kv_cache_dtype_skip_layers", None),
+        disable_hybrid_kv_cache_manager=getattr(args, "disable_hybrid_kv_cache_manager", None),
         language_model_only=True,
         limit_mm_per_prompt={"image": 0, "audio": 0, "video": 0},
     )

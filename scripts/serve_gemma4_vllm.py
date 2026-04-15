@@ -15,8 +15,10 @@ from gemma4_vllm_profiles import (
     MOE_BACKENDS,
     NVFP4_GEMM_BACKENDS,
     SERVER_PROFILES,
+    TURBOQUANT_KV_CACHE_DTYPES,
     ensure_runtime_bin_on_path,
 )
+from gemma4_vllm_turboquant import is_turboquant_kv_cache_dtype, resolve_selective_turboquant_settings
 
 
 FLAG_MAP = {
@@ -25,10 +27,12 @@ FLAG_MAP = {
     "quantization": "--quantization",
     "trust_remote_code": "--trust-remote-code",
     "kv_cache_dtype": "--kv-cache-dtype",
+    "kv_cache_dtype_skip_layers": "--kv-cache-dtype-skip-layers",
     "max_model_len": "--max-model-len",
     "gpu_memory_utilization": "--gpu-memory-utilization",
     "max_num_seqs": "--max-num-seqs",
     "max_num_batched_tokens": "--max-num-batched-tokens",
+    "disable_hybrid_kv_cache_manager": "--disable-hybrid-kv-cache-manager",
     "enable_prefix_caching": "--enable-prefix-caching",
     "language_model_only": "--language-model-only",
     "limit_mm_per_prompt": "--limit-mm-per-prompt",
@@ -69,7 +73,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--kv-cache-dtype",
         default=None,
-        choices=["auto", "fp8"],
+        choices=["auto", "fp8", *TURBOQUANT_KV_CACHE_DTYPES],
         help="Override the profile's KV cache dtype.",
     )
     parser.add_argument(
@@ -170,11 +174,22 @@ def resolve_settings(args: argparse.Namespace) -> dict[str, Any]:
     if args.enable_thinking_by_default:
         settings["default_chat_template_kwargs"] = json.dumps({"enable_thinking": True})
 
+    settings.update(
+        resolve_selective_turboquant_settings(
+            model=settings["model"],
+            trust_remote_code=bool(settings.get("trust_remote_code", False)),
+            kv_cache_dtype=settings.get("kv_cache_dtype"),
+            kv_cache_dtype_skip_layers=settings.get("kv_cache_dtype_skip_layers"),
+            disable_hybrid_kv_cache_manager=settings.get("disable_hybrid_kv_cache_manager"),
+        )
+    )
+
     return settings
 
 
 def build_command(args: argparse.Namespace, settings: dict[str, Any]) -> list[str]:
-    cmd = ["vllm", "serve", settings["model"], "--host", args.host, "--port", str(args.port)]
+    runner = os.path.join(os.path.dirname(__file__), "run_vllm_cli.py")
+    cmd = [sys.executable, runner, "serve", settings["model"], "--host", args.host, "--port", str(args.port)]
     for key, value in settings.items():
         if key == "model":
             continue
@@ -185,8 +200,12 @@ def build_command(args: argparse.Namespace, settings: dict[str, Any]) -> list[st
             if value:
                 cmd.append(flag)
             continue
-        if isinstance(value, (dict, list)):
+        if isinstance(value, dict):
             cmd.extend([flag, json.dumps(value)])
+            continue
+        if isinstance(value, list):
+            cmd.append(flag)
+            cmd.extend(str(item) for item in value)
             continue
         cmd.extend([flag, str(value)])
 
@@ -194,12 +213,16 @@ def build_command(args: argparse.Namespace, settings: dict[str, Any]) -> list[st
     return cmd
 
 
-def build_env(args: argparse.Namespace) -> dict[str, str]:
+def build_env(args: argparse.Namespace, settings: dict[str, Any]) -> dict[str, str]:
     env = os.environ.copy()
     if not args.verbose:
         env["VLLM_LOGGING_LEVEL"] = "WARNING"
     if args.nvfp4_gemm_backend != "auto":
         env["VLLM_NVFP4_GEMM_BACKEND"] = args.nvfp4_gemm_backend
+    if is_turboquant_kv_cache_dtype(settings.get("kv_cache_dtype")):
+        env["GEMMA4_VLLM_ENABLE_TURBOQUANT_PATCH"] = "1"
+    else:
+        env.pop("GEMMA4_VLLM_ENABLE_TURBOQUANT_PATCH", None)
     return env
 
 
@@ -211,7 +234,7 @@ def main() -> int:
     profile = SERVER_PROFILES[args.profile]
     settings = resolve_settings(args)
     cmd = build_command(args, settings)
-    env = build_env(args)
+    env = build_env(args, settings)
 
     print(f"profile: {profile.key}")
     print(f"description: {profile.description}")
