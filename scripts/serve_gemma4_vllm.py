@@ -16,7 +16,6 @@ from gemma4_vllm_profiles import (
     NVFP4_GEMM_BACKENDS,
     SERVER_PROFILES,
     ensure_runtime_bin_on_path,
-    has_moe_loader_patch,
 )
 
 
@@ -134,12 +133,6 @@ def validate_runtime(args: argparse.Namespace) -> None:
                 f"Current torch CUDA version is {cuda_version or 'unknown'}. "
                 f"Use {profile.recommended_python}."
             )
-
-    if profile.requires_moe_loader_patch and not has_moe_loader_patch():
-        raise RuntimeError(
-            "The selected MoE profile needs the patched Gemma 4 loader. "
-            "Apply patches/vllm-gemma4-modelopt-moe-loader.patch in the active vLLM environment first."
-        )
 
     if shutil.which("vllm") is None:
         raise RuntimeError("Could not find the vllm CLI on PATH in the active environment.")

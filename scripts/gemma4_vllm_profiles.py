@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import importlib.util
 import os
 import sys
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any
 
 
-MOE_26B_MODEL = "bg-digitalservices/Gemma-4-26B-A4B-it-NVFP4"
+MOE_26B_MODEL = "cklaus/gemma-4-26B-A4B-it-NVFP4"
+MOE_26B_REDHAT_MODEL = "RedHatAI/gemma-4-26B-A4B-it-NVFP4"
 LILA_MODEL = "LilaRest/gemma-4-31B-it-NVFP4-turbo"
 REDHAT_MODEL = "RedHatAI/gemma-4-31B-it-NVFP4"
 DEFAULT_GGUF_MODEL = "unsloth/gemma-4-31B-it-GGUF:Q4_K_M"
+BASE_26B_TOKENIZER = "google/gemma-4-26B-A4B-it"
 BASE_31B_TOKENIZER = "google/gemma-4-31B-it"
 
 NVFP4_GEMM_BACKENDS = [
@@ -29,12 +29,24 @@ MOE_BACKENDS = ["auto", "marlin"]
 
 MODEL_SPECIFIC_DEFAULTS = {
     MOE_26B_MODEL: {
+        "tokenizer": BASE_26B_TOKENIZER,
         "quantization": "modelopt",
         "dtype": "auto",
-        "trust_remote_code": True,
+        "trust_remote_code": False,
         "kv_cache_dtype": "auto",
-        "max_model_len": 50000,
-        "nvfp4_gemm_backend": "marlin",
+        "max_model_len": 4096,
+        "gpu_memory_utilization": 0.90,
+        "moe_backend": "auto",
+    },
+    MOE_26B_REDHAT_MODEL: {
+        "tokenizer": BASE_26B_TOKENIZER,
+        "quantization": "none",
+        "dtype": "auto",
+        "trust_remote_code": False,
+        "kv_cache_dtype": "auto",
+        "max_model_len": 4096,
+        "gpu_memory_utilization": 0.90,
+        "moe_backend": "auto",
     },
     REDHAT_MODEL: {
         "quantization": "none",
@@ -70,7 +82,6 @@ class ServerProfile:
     recommended_python: str
     defaults: dict[str, Any] = field(default_factory=dict)
     requires_cuda_major: int | None = None
-    requires_moe_loader_patch: bool = False
 
 
 SERVER_PROFILES = {
@@ -78,7 +89,7 @@ SERVER_PROFILES = {
         key="dense-31b",
         model=LILA_MODEL,
         description="Default 31B dense profile for this RTX 5090: LilaRest turbo NVFP4 on CUDA 13.",
-        recommended_python=".venv-vllm-cu130/bin/python",
+        recommended_python=".venv/bin/python",
         requires_cuda_major=13,
         defaults={
             "quantization": "modelopt",
@@ -98,7 +109,7 @@ SERVER_PROFILES = {
         key="dense-31b-redhat",
         model=REDHAT_MODEL,
         description="Alternative 31B dense profile: Red Hat NVFP4 with a conservative context budget on this RTX 5090.",
-        recommended_python=".venv-vllm-cu130/bin/python",
+        recommended_python=".venv/bin/python",
         requires_cuda_major=13,
         defaults={
             "max_model_len": 4096,
@@ -114,20 +125,40 @@ SERVER_PROFILES = {
     "moe-26b": ServerProfile(
         key="moe-26b",
         model=MOE_26B_MODEL,
-        description="Patched 26B MoE NVFP4 profile using the community checkpoint and Marlin MoE kernels.",
-        recommended_python=".venv-vllm/bin/python",
-        requires_moe_loader_patch=True,
+        description="Default 26B MoE profile for this RTX 5090: selective NVFP4 checkpoint on CUDA 13 with native Blackwell FP4 kernels.",
+        recommended_python=".venv/bin/python",
+        requires_cuda_major=13,
         defaults={
             "quantization": "modelopt",
-            "trust_remote_code": True,
-            "max_model_len": 50000,
+            "trust_remote_code": False,
+            "kv_cache_dtype": "auto",
+            "max_model_len": 4096,
             "gpu_memory_utilization": 0.9,
-            "max_num_seqs": 1,
-            "max_num_batched_tokens": 4096,
+            "max_num_seqs": 16,
+            "max_num_batched_tokens": 8192,
             "enable_prefix_caching": True,
             "language_model_only": True,
             "limit_mm_per_prompt": {"image": 0, "audio": 0, "video": 0},
-            "moe_backend": "marlin",
+            "moe_backend": "auto",
+            "reasoning_parser": "gemma4",
+        },
+    ),
+    "moe-26b-redhat": ServerProfile(
+        key="moe-26b-redhat",
+        model=MOE_26B_REDHAT_MODEL,
+        description="Upstream 26B MoE NVFP4 profile on CUDA 13 for comparison against the 5090-tuned selective quantization.",
+        recommended_python=".venv/bin/python",
+        requires_cuda_major=13,
+        defaults={
+            "kv_cache_dtype": "auto",
+            "max_model_len": 4096,
+            "gpu_memory_utilization": 0.9,
+            "max_num_seqs": 16,
+            "max_num_batched_tokens": 8192,
+            "enable_prefix_caching": True,
+            "language_model_only": True,
+            "limit_mm_per_prompt": {"image": 0, "audio": 0, "video": 0},
+            "moe_backend": "auto",
             "reasoning_parser": "gemma4",
         },
     ),
@@ -140,19 +171,3 @@ def ensure_runtime_bin_on_path() -> None:
     path_entries = current_path.split(os.pathsep) if current_path else []
     if runtime_bin_dir and runtime_bin_dir not in path_entries:
         os.environ["PATH"] = os.pathsep.join([runtime_bin_dir, *path_entries]) if path_entries else runtime_bin_dir
-
-
-def detect_installed_vllm_gemma4_source() -> Path | None:
-    spec = importlib.util.find_spec("vllm.model_executor.models.gemma4")
-    if spec is None or spec.origin is None:
-        return None
-    return Path(spec.origin)
-
-
-def has_moe_loader_patch() -> bool:
-    source_path = detect_installed_vllm_gemma4_source()
-    if source_path is None or not source_path.exists():
-        return False
-
-    source = source_path.read_text()
-    return "Gemma 4 MoE NVFP4 checkpoints include expert weights plus" in source and "weight_scale_2" in source

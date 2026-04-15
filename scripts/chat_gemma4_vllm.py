@@ -12,12 +12,14 @@ from typing import Any
 
 from transformers import AutoProcessor
 from gemma4_vllm_profiles import (
+    BASE_26B_TOKENIZER,
     BASE_31B_TOKENIZER,
     DEFAULT_GGUF_MODEL,
     LILA_MODEL,
     MODEL_SPECIFIC_DEFAULTS,
     MOE_26B_MODEL,
     MOE_BACKENDS,
+    MOE_26B_REDHAT_MODEL,
     NVFP4_GEMM_BACKENDS,
     REDHAT_MODEL,
     ensure_runtime_bin_on_path,
@@ -73,7 +75,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--moe-backend",
-        default="marlin",
+        default=None,
         choices=MOE_BACKENDS,
         help="MoE backend override",
     )
@@ -186,6 +188,7 @@ def apply_model_specific_defaults(args: argparse.Namespace) -> list[str]:
         "--nvfp4-gemm-backend": "nvfp4_gemm_backend",
         "--max-model-len": "max_model_len",
         "--gpu-memory-utilization": "gpu_memory_utilization",
+        "--moe-backend": "moe_backend",
     }
     for option, attr in option_to_attr.items():
         if option not in args._specified_flags and attr in defaults:
@@ -205,6 +208,8 @@ def apply_model_specific_defaults(args: argparse.Namespace) -> list[str]:
         args.kv_cache_dtype = "auto"
     if args.max_model_len is None:
         args.max_model_len = 4096
+    if args.moe_backend is None:
+        args.moe_backend = "auto"
     return applied
 
 
@@ -237,7 +242,7 @@ def get_runtime_cuda_version() -> str | None:
 
 def print_runtime_notes(args: argparse.Namespace) -> None:
     runtime_cuda = get_runtime_cuda_version()
-    if args.model in {REDHAT_MODEL, LILA_MODEL} and runtime_cuda is not None:
+    if args.model in {REDHAT_MODEL, LILA_MODEL, MOE_26B_MODEL, MOE_26B_REDHAT_MODEL} and runtime_cuda is not None:
         major = int(runtime_cuda.split(".", 1)[0])
         if major < 13:
             print(

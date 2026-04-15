@@ -9,16 +9,19 @@ import time
 from transformers import AutoProcessor
 from vllm import LLM, SamplingParams
 from gemma4_vllm_profiles import (
+    BASE_26B_TOKENIZER,
     BASE_31B_TOKENIZER,
     DEFAULT_GGUF_MODEL,
     LILA_MODEL,
     MODEL_SPECIFIC_DEFAULTS,
+    MOE_26B_MODEL,
+    MOE_26B_REDHAT_MODEL,
     REDHAT_MODEL,
     ensure_runtime_bin_on_path,
 )
 
 
-DEFAULT_MODEL = "google/gemma-4-E4B-it"
+DEFAULT_MODEL = MOE_26B_MODEL
 DEFAULT_PROMPT = "Explain NVFP4 in one sentence."
 
 
@@ -72,7 +75,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--moe-backend",
-        default="marlin",
+        default=None,
         choices=["auto", "marlin"],
         help="MoE backend override",
     )
@@ -135,6 +138,7 @@ def apply_model_specific_defaults(args: argparse.Namespace) -> list[str]:
         "--nvfp4-gemm-backend": "nvfp4_gemm_backend",
         "--max-model-len": "max_model_len",
         "--gpu-memory-utilization": "gpu_memory_utilization",
+        "--moe-backend": "moe_backend",
     }
     for option, attr in option_to_attr.items():
         if option not in args._specified_flags and attr in defaults:
@@ -154,6 +158,8 @@ def apply_model_specific_defaults(args: argparse.Namespace) -> list[str]:
         args.kv_cache_dtype = "auto"
     if args.max_model_len is None:
         args.max_model_len = 4096
+    if args.moe_backend is None:
+        args.moe_backend = "auto"
     return applied
 
 

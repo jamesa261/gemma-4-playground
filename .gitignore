@@ -1,6 +1,4 @@
 .venv/
-.venv-vllm/
-.venv-vllm-cu130/
 __pycache__/
 *.py[cod]
 *.log
